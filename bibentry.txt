@@ -1,0 +1,9 @@
+% bibentry template for lsst.bib in https://github.com/lsst/lsst-texmf/blob/main/texmf/bibtex/bib/lsst.bib
+
+@DocuShare{SITCOMTN-044,
+   author = { Chris Suberlak },
+    title = {The Sensitivity of Active Optics System Algorithm to Offset Centroid},
+     year = 2022,
+    month = Jul,
+   handle = {SITCOMTN-044},
+      url = {https://sitcomtn-044.lsst.io } }
