@@ -141,7 +141,7 @@ def get_butler_image(repo_dir,instrument='LSSTComCam', iterN=0, detector="R22_S0
 def offset_centroid_square_grid(repo_dir ,
                                 instrument = 'LSSTCam',
                                 collection='ts_phosim_9006070',
-                                sensors=['R00'],
+                                sensors=['R00', 'R04', 'R40','R44'],
                                 index_increase='both', 
                                 experiment_index = 1,
                                 out_dir = 'DM-33104'):
@@ -159,7 +159,8 @@ def offset_centroid_square_grid(repo_dir ,
     collection: str, if not provided then the name is constructed 
         given the iterN, as `ts_phosim_90060{iterN}`, which is the
         default collection naming in the imgCloseLoop.py 'ts_phosim_9006070'
-    sensors: list of sensor names, only first half needed, eg. ['R00'] (default). 
+    sensors: list of sensor names, only first half needed. By default: all 
+        corner wavefront sensors ('R00', 'R04', 'R40','R44').
     index_increase: str, accepted values are
         - 'both' increase the index of both extra and intra-focal donuts,  
            i.e. fit donutIntra[i] with donutExtra[i],
@@ -304,10 +305,13 @@ def offset_centroid_square_grid(repo_dir ,
             baseline['imgExtra'] = imgExtra
             baseline['zks'] = zk_no_offset
             
-            fname = f'exp-{experiment_index}_{sensor}_baseline_extra_{i_ex}_intra_{i_in}.npy'
+            fname = f'exp-{experiment_index}_{sensor}_baseline_ex-{i_ex}_in-{i_in}.npy'
             fpath = os.path.join(out_dir, fname)
-            np.save(fpath, baseline)
-            print(f'\nSaved the baseline fit as {fpath}')
+            if not os.path.exists(fpath):
+                np.save(fpath, baseline)
+                print(f'\nSaved the baseline fit as {fpath}')
+            else:
+                print(f'\nBaseline fit already exists as {fpath}')
             
 
             #######################################
@@ -317,92 +321,98 @@ def offset_centroid_square_grid(repo_dir ,
             ## First applying change to the extra-focal mask, and then to the intra-focal mask
             for defocal in ['intra','extra']: # or extra 
                 print(f'Fitting {sensor} donuts {i_in} {i_ex} shifting {defocal} centroid ')
-                zk0 = zk_no_offset
-
-                dxInPixels = np.linspace(-100,100,20)
-                dyInPixels = dxInPixels
-
-                dxInDegrees = (dxInPixels* pixelScale) / 3600
-                dyInDegrees = (dyInPixels* pixelScale) / 3600
-
-                results = {}
-                j =0 
                 
-                for dxDeg in dxInDegrees:
-                    for dyDeg in dyInDegrees:
-                        
-                        # calculate radial offset
-                        radialOffsetDegrees = np.sqrt(dxDeg**2.0+dyDeg**2.0)
-
-                        # convert the x,y offset of the mask from degrees to pixels via pixelScale
-                        radialOffsetPixels = ( radialOffsetDegrees * 3600 )/pixelScale
-
-                        dxPx = (dxDeg * 3600) / pixelScale
-                        dyPx = (dyDeg * 3600) / pixelScale
-                        
-                        results[j] = {'dxDeg':dxDeg, 'dyDeg':dyDeg, 
-                                      'dxPx':dxPx, 'dyPx':dyPx, 
-                                      'drDeg':radialOffsetDegrees,
-                                      'drPx':radialOffsetPixels, 
-                                      }
-
-                         # do the fit 
-                        if defocal == 'extra':
-                            fieldXYExtraUpd = (fieldXYExtra[0]+dxDeg, fieldXYExtra[1]+dyDeg)
-                            fieldXYIntraUpd = fieldXYIntra
-
-                        elif defocal =='intra':
-                            fieldXYExtraUpd = fieldXYExtra
-                            fieldXYIntraUpd = (fieldXYIntra[0]+dxDeg, fieldXYIntra[1]+dyDeg)
-
-                        imgExtra.setImg(fieldXYExtraUpd,
-                                        DefocalType.Extra,
-                                        image=rotate(donutExtra.stamp_im.getImage().getArray(), eulerZExtra).T)
-
-                        imgIntra.setImg(fieldXYIntraUpd,
-                                        DefocalType.Intra,
-                                        image=rotate(donutIntra.stamp_im.getImage().getArray(), eulerZIntra).T)
-
-                        # right after we set the image, the compensable image mask is empty - 
-                        # it is only calculated in Algorithm.py, L694
-                        maskScalingFactorLocal = 1
-                        boundaryT = algo.getBoundaryThickness()
-                        imgIntra.makeMask(inst, opticalModel, boundaryT, maskScalingFactorLocal)
-                        imgExtra.makeMask(inst, opticalModel, boundaryT, maskScalingFactorLocal)
-
-                        # now wfEsti.reset() calls the .reset() method of Algorithm.py : 
-                        algo.reset()
-
-                        # wfEsti.calWfsErr() after checking for image size (both need to be squares)
-                        # simply calls algo:
-                        tol = 1e-3 # explicitly set the tolerance level ( this is default )
-                        algo.runIt(imgIntra, imgExtra, opticalModel, tol=tol)
-                        zk = algo.getZer4UpInNm()
-                        
-                        # calculate diffMax, diffRms
-                        diffMax = np.max(np.abs(zk - zk0))
-                        diffRms = np.sqrt(np.sum(np.abs(zk - zk0) ** 2) / len(zk))
-
-                        # store the results 
-                        results[j]['diffMax'] = diffMax
-                        results[j]['diffRms'] = diffRms
-                        results[j]['zk'] = zk
-                        results[j]['imgExtraFieldXY'] = imgExtra.getFieldXY()
-                        results[j]['imgIntraFieldXY'] = imgIntra.getFieldXY()
-
-                        # increase the grid counter 
-                        j += 1 
-                        print(j, dxPx, dyPx, diffRms, )
-                fname = f'exp-{experiment_index}_{sensor}_square_grid_extra_{i_ex}_intra_{i_in}.npy'
+                fname = f'exp-{experiment_index}_{sensor}_square_ex-{i_ex}_in-{i_in}_move_{defocal}.npy'
                 fpath = os.path.join(out_dir, fname)
-                np.save(fpath, results)
-                print(f"saved {fname}")
+                
+                if os.path.exists(fpath):
+                    print('Skipping already calculated grid...')
+                else: # proceed to calculation only if it has not been done yet
+                    zk0 = zk_no_offset
+
+                    dxInPixels = np.linspace(-100,100,20)
+                    dyInPixels = dxInPixels
+
+                    dxInDegrees = (dxInPixels* pixelScale) / 3600
+                    dyInDegrees = (dyInPixels* pixelScale) / 3600
+
+                    results = {}
+                    j =0 
+
+                    for dxDeg in dxInDegrees:
+                        for dyDeg in dyInDegrees:
+
+                            # calculate radial offset
+                            radialOffsetDegrees = np.sqrt(dxDeg**2.0+dyDeg**2.0)
+
+                            # convert the x,y offset of the mask from degrees to pixels via pixelScale
+                            radialOffsetPixels = ( radialOffsetDegrees * 3600 )/pixelScale
+
+                            dxPx = (dxDeg * 3600) / pixelScale
+                            dyPx = (dyDeg * 3600) / pixelScale
+
+                            results[j] = {'dxDeg':dxDeg, 'dyDeg':dyDeg, 
+                                          'dxPx':dxPx, 'dyPx':dyPx, 
+                                          'drDeg':radialOffsetDegrees,
+                                          'drPx':radialOffsetPixels, 
+                                          }
+
+                             # do the fit 
+                            if defocal == 'extra':
+                                fieldXYExtraUpd = (fieldXYExtra[0]+dxDeg, fieldXYExtra[1]+dyDeg)
+                                fieldXYIntraUpd = fieldXYIntra
+
+                            elif defocal =='intra':
+                                fieldXYExtraUpd = fieldXYExtra
+                                fieldXYIntraUpd = (fieldXYIntra[0]+dxDeg, fieldXYIntra[1]+dyDeg)
+
+                            imgExtra.setImg(fieldXYExtraUpd,
+                                            DefocalType.Extra,
+                                            image=rotate(donutExtra.stamp_im.getImage().getArray(), eulerZExtra).T)
+
+                            imgIntra.setImg(fieldXYIntraUpd,
+                                            DefocalType.Intra,
+                                            image=rotate(donutIntra.stamp_im.getImage().getArray(), eulerZIntra).T)
+
+                            # right after we set the image, the compensable image mask is empty - 
+                            # it is only calculated in Algorithm.py, L694
+                            maskScalingFactorLocal = 1
+                            boundaryT = algo.getBoundaryThickness()
+                            imgIntra.makeMask(inst, opticalModel, boundaryT, maskScalingFactorLocal)
+                            imgExtra.makeMask(inst, opticalModel, boundaryT, maskScalingFactorLocal)
+
+                            # now wfEsti.reset() calls the .reset() method of Algorithm.py : 
+                            algo.reset()
+
+                            # wfEsti.calWfsErr() after checking for image size (both need to be squares)
+                            # simply calls algo:
+                            tol = 1e-3 # explicitly set the tolerance level ( this is default )
+                            algo.runIt(imgIntra, imgExtra, opticalModel, tol=tol)
+                            zk = algo.getZer4UpInNm()
+
+                            # calculate diffMax, diffRms
+                            diffMax = np.max(np.abs(zk - zk0))
+                            diffRms = np.sqrt(np.sum(np.abs(zk - zk0) ** 2) / len(zk))
+
+                            # store the results 
+                            results[j]['diffMax'] = diffMax
+                            results[j]['diffRms'] = diffRms
+                            results[j]['zk'] = zk
+                            results[j]['imgExtraFieldXY'] = imgExtra.getFieldXY()
+                            results[j]['imgIntraFieldXY'] = imgIntra.getFieldXY()
+
+                            # increase the grid counter 
+                            j += 1 
+                            print(j, dxPx, dyPx, diffRms, )
+
+                    np.save(fpath, results)
+                    print(f"saved {fname}")
 
                 
 def offset_centroid_circle(repo_dir ,
                            instrument = 'LSSTCam',
                            collection='ts_phosim_9006070',
-                           sensors=['R00'],
+                           sensors=['R00','R04', 'R40','R44'],
                            index_increase='both', 
                            experiment_index = 2,
                            out_dir = 'DM-33104'
@@ -565,7 +575,7 @@ def offset_centroid_circle(repo_dir ,
             baseline['imgExtra'] = imgExtra
             baseline['zks'] = zk_no_offset
             
-            fname = f'exp-{experiment_index}_{sensor}_baseline_extra_{i_ex}_intra_{i_in}.npy'
+            fname = f'exp-{experiment_index}_{sensor}_baseline_ex-{i_ex}_in-{i_in}.npy'
             fpath = os.path.join(out_dir, fname)
             np.save(fpath, baseline)
             print(f'\nSaved the baseline fit as {fname}')
@@ -578,95 +588,104 @@ def offset_centroid_circle(repo_dir ,
             ## First applying change to the extra-focal mask, and then to the intra-focal mask
             for defocal in ['intra','extra']: # or extra 
                 print(f'Fitting {sensor} donuts {i_in} {i_ex} shifting {defocal} centroid ')
-                zk0 = zk_no_offset
-
-                # starting boundary conditions 
-                thetaRad = 0 # radians
-                dthetaRad = 0.2 # radians ~ 11.45 deg 
-                drPxStep = 10 # pixels 
-                diffRmsThresh = 1.0 # nm 
-
-                results = {}
-
-                j=0
-                # iterate over a range of angles 
-                for thetaRad in np.arange(0,2*np.pi, dthetaRad):
-
-                    # always start from 0 radius ... 
-                    drPx = 0 # px 
-                    diffRms = 0 # nm 
-
-                    # increase radius until threshold is reached 
-                    while diffRms < diffRmsThresh:
-
-                        dxPx = drPx*np.cos(thetaRad)
-                        dyPx = drPx*np.sin(thetaRad)
-
-                        dxDeg = (dxPx * pixelScale) / 3600.
-                        dyDeg = (dyPx * pixelScale) / 3600.
-
-                        results[j]={'dxPx':dxPx, 'dyPx':dyPx, 'dxDeg':dxDeg, 'dyDeg':dyDeg,
-                                    'drPx':drPx, }
-
-                         # do the fit 
-                        if defocal == 'extra':
-                            fieldXYExtraUpd = (fieldXYExtra[0]+dxDeg, 
-                                               fieldXYExtra[1]+dyDeg)
-                            fieldXYIntraUpd = fieldXYIntra
-
-                        elif defocal =='intra':
-                            fieldXYExtraUpd = fieldXYExtra
-                            fieldXYIntraUpd = (fieldXYIntra[0]+dxDeg, 
-                                               fieldXYIntra[1]+dyDeg)
-
-                        imgExtra.setImg(fieldXYExtraUpd,
-                                        DefocalType.Extra,
-                                        image=rotate(donutExtra.stamp_im.getImage().getArray(), 
-                                                     eulerZExtra).T)
-
-                        imgIntra.setImg(fieldXYIntraUpd,
-                                        DefocalType.Intra,
-                                        image=rotate(donutIntra.stamp_im.getImage().getArray(), 
-                                                     eulerZIntra).T)
-
-                        # right after we set the image, the compensable image mask is empty - 
-                        # it is only calculated in Algorithm.py, L694
-                        maskScalingFactorLocal = 1
-                        boundaryT = algo.getBoundaryThickness()
-                        imgIntra.makeMask(inst, opticalModel, boundaryT, 
-                                          maskScalingFactorLocal)
-                        imgExtra.makeMask(inst, opticalModel, boundaryT, 
-                                          maskScalingFactorLocal)
-
-                        # now wfEsti.reset() calls the .reset() method of Algorithm.py : 
-                        algo.reset()
-
-                        # wfEsti.calWfsErr() after checking for image size (both need to be squares)
-                        # simply calls algo:
-                        tol = 1e-3 # explicitly set the tolerance level ( this is default )
-                        algo.runIt(imgIntra, imgExtra, opticalModel, tol=tol)
-                        zk = algo.getZer4UpInNm()
-                        
-                        # calculate diffMax, diffRms
-                        diffMax = np.max(np.abs(zk - zk0))
-                        diffRms = np.sqrt(np.sum(np.abs(zk - zk0) ** 2) / len(zk))
-
-                        # store the results 
-                        results[j]['diffMax'] = diffMax
-                        results[j]['diffRms'] = diffRms
-                        results[j]['zk'] = zk
-                        results[j]['imgExtraFieldXY'] = imgExtra.getFieldXY()
-                        results[j]['imgIntraFieldXY'] = imgIntra.getFieldXY()
-                        
-                        # increase the grid counter 
-                        j += 1 
-                    print(j-1, drPx, thetaRad, diffRms) 
-                    print('Threshold reached at radius ', drPx)  
-                # save the results
-                fname = f'exp-{experiment_index}_{sensor}_circle_extra_{i_ex}_intra_{i_in}.npy'
+                
+                fname = f'exp-{experiment_index}_{sensor}_circle_ex-{i_ex}_in-{i_in}_move_{defocal}.npy'
                 fpath = os.path.join(out_dir, fname)
-                print(f"saved {fpath}")
-                np.save(fpath, results)
+                
+                if os.path.exists(fpath):
+                    print('Skipping already calculated grid...')
+                else: # proceed to calculation only if it has not been done yet
+
+                    zk0 = zk_no_offset
+
+                    # starting boundary conditions 
+                    thetaRad = 0 # radians
+                    dthetaRad = 0.2 # radians ~ 11.45 deg 
+                    drPxStep = 10 # pixels 
+                    diffRmsThresh = 1.0 # nm 
+
+                    results = {}
+
+                    j=0
+                    # iterate over a range of angles 
+                    for thetaRad in np.arange(0,2*np.pi, dthetaRad):
+
+                        # always start from 0 radius ... 
+                        drPx = 0 # px 
+                        diffRms = 0 # nm 
+
+                        # increase radius until threshold is reached 
+                        while diffRms < diffRmsThresh:
+
+                            dxPx = drPx*np.cos(thetaRad)
+                            dyPx = drPx*np.sin(thetaRad)
+
+                            dxDeg = (dxPx * pixelScale) / 3600.
+                            dyDeg = (dyPx * pixelScale) / 3600.
+
+                            results[j]={'dxPx':dxPx, 'dyPx':dyPx, 'dxDeg':dxDeg, 'dyDeg':dyDeg,
+                                        'drPx':drPx, }
+
+                             # do the fit 
+                            if defocal == 'extra':
+                                fieldXYExtraUpd = (fieldXYExtra[0]+dxDeg, 
+                                                   fieldXYExtra[1]+dyDeg)
+                                fieldXYIntraUpd = fieldXYIntra
+
+                            elif defocal =='intra':
+                                fieldXYExtraUpd = fieldXYExtra
+                                fieldXYIntraUpd = (fieldXYIntra[0]+dxDeg, 
+                                                   fieldXYIntra[1]+dyDeg)
+
+                            imgExtra.setImg(fieldXYExtraUpd,
+                                            DefocalType.Extra,
+                                            image=rotate(donutExtra.stamp_im.getImage().getArray(), 
+                                                         eulerZExtra).T)
+
+                            imgIntra.setImg(fieldXYIntraUpd,
+                                            DefocalType.Intra,
+                                            image=rotate(donutIntra.stamp_im.getImage().getArray(), 
+                                                         eulerZIntra).T)
+
+                            # right after we set the image, the compensable image mask is empty - 
+                            # it is only calculated in Algorithm.py, L694
+                            maskScalingFactorLocal = 1
+                            boundaryT = algo.getBoundaryThickness()
+                            imgIntra.makeMask(inst, opticalModel, boundaryT, 
+                                              maskScalingFactorLocal)
+                            imgExtra.makeMask(inst, opticalModel, boundaryT, 
+                                              maskScalingFactorLocal)
+
+                            # now wfEsti.reset() calls the .reset() method of Algorithm.py : 
+                            algo.reset()
+
+                            # wfEsti.calWfsErr() after checking for image size (both need to be squares)
+                            # simply calls algo:
+                            tol = 1e-3 # explicitly set the tolerance level ( this is default )
+                            algo.runIt(imgIntra, imgExtra, opticalModel, tol=tol)
+                            zk = algo.getZer4UpInNm()
+
+                            # calculate diffMax, diffRms
+                            diffMax = np.max(np.abs(zk - zk0))
+                            diffRms = np.sqrt(np.sum(np.abs(zk - zk0) ** 2) / len(zk))
+
+                            # store the results 
+                            results[j]['diffMax'] = diffMax
+                            results[j]['diffRms'] = diffRms
+                            results[j]['zk'] = zk
+                            results[j]['imgExtraFieldXY'] = imgExtra.getFieldXY()
+                            results[j]['imgIntraFieldXY'] = imgIntra.getFieldXY()
+                            
+                            # increase the radius
+                            drPx += drPxStep
+                            
+                            # increase the grid counter 
+                            j += 1 
+                            print(f'{j-1}, {thetaRad}/{2*np.pi}, {drPx}, {diffRms}') 
+                        print('Threshold reached at radius ', drPx)  
+                    # save the results
+                    print(f"saved {fpath}")
+                    np.save(fpath, results)
             
 def get_nx_ny(x,y,dr):
     ''' Obtain new x, new y coordinate, 
@@ -874,7 +893,7 @@ def offset_centroid_radially(repo_dir,
             for defocal in ['intra', 'extra']: # or extra 
                 print(f'Shifting the centroid for {defocal}-donut in that pair ')
                 
-                fname = f'exp-{experiment_index}_{sensor}_donut_0_{i}_move_{defocal}_results_radialN.npy'
+                fname = f'exp-{experiment_index}_{sensor}_donut_0_{i}_move_{defocal}_radialN.npy'
                 fpath = os.path.join(out_dir, fname)
                 if os.path.exists(fpath):
                     print(f'Skipping {fpath}')
