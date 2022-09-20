@@ -7,6 +7,7 @@ jobs:
     uses: lsst-sqre/rubin-sphinx-technote-workflows/.github/workflows/ci.yaml@v1
     with:
       handle: sitcomtn-044
+      apt_packages: 'pandoc'
     secrets:
       ltd_username: ${{ secrets.LTD_USERNAME }}
       ltd_password: ${{ secrets.LTD_PASSWORD }}
